@@ -5,8 +5,50 @@ import copy
 
 DEFAULT_CONFIG = {
     "json_file_path": "./data/sample_data.json",
+    "export_format": "excel",
     "excel_output_path": "./output/result.xlsx",
+    "csv_output_path": "./output/result.csv",
+    "tsv_output_path": "./output/result.tsv",
+    "html_output_path": "./output/result.html",
+    "markdown_output_path": "./output/result.md",
+    "json_output_path": "./output/result.json",
+    "pdf_output_path": "./output/result.pdf",
     "sheet_name": "数据导出",
+    "csv_config": {
+        "encoding": "utf-8-sig",
+        "delimiter": ",",
+        "include_header": True,
+        "quote_char": '"',
+        "quoting": "minimal",
+    },
+    "tsv_config": {
+        "encoding": "utf-8-sig",
+        "include_header": True,
+    },
+    "html_config": {
+        "title": "数据导出",
+        "include_index": False,
+        "pretty_print": True,
+        "style": "default",
+        "custom_css": "",
+    },
+    "markdown_config": {
+        "title": "数据导出",
+        "include_index": False,
+        "max_col_width": 50,
+    },
+    "json_config": {
+        "indent": 2,
+        "ensure_ascii": False,
+        "include_labels": False,
+    },
+    "pdf_config": {
+        "title": "数据导出",
+        "include_index": False,
+        "page_size": "A4",
+        "orientation": "portrait",
+        "font_size": 10,
+    },
     "default_headers": [
         {"key": "id", "label": "ID", "width": 10},
         {"key": "name", "label": "姓名", "width": 15},
@@ -43,6 +85,32 @@ DEFAULT_CONFIG = {
         "vertical_alignment": "center",
         "border_style": "thin",
         "border_color": "#000000",
+    },
+    "validation_rules": [],
+    "validation_on_fail_default": "mark",
+    "split_config": {
+        "enabled": False,
+        "split_field": "",
+        "split_rule": "by_value",
+        "sheet_name_template": "{value}",
+        "include_all_sheet": True,
+        "all_sheet_name": "全部数据",
+        "empty_value_label": "未分类",
+        "max_sheet_name_length": 31,
+        "range_groups": [],
+        "custom_rules": [],
+    },
+    "pivot_config": {
+        "enabled": False,
+        "sheet_name": "数据透视表",
+        "row_fields": [],
+        "column_fields": [],
+        "value_fields": [],
+        "show_row_totals": True,
+        "show_column_totals": True,
+        "grand_total_label": "总计",
+        "empty_value_label": "(空白)",
+        "apply_style": True,
     },
 }
 
@@ -97,8 +165,16 @@ def validate_config(config):
     if not config.get("json_file_path"):
         errors.append("JSON文件路径不能为空")
 
-    if not config.get("excel_output_path"):
-        errors.append("Excel输出路径不能为空")
+    export_format = config.get("export_format", "excel")
+    valid_formats = {"excel", "csv", "tsv", "html", "markdown", "json", "pdf"}
+    if export_format not in valid_formats:
+        errors.append(f"导出格式无效，应为: {', '.join(sorted(valid_formats))}")
+
+    output_path_key = f"{export_format}_output_path"
+    if export_format == "excel":
+        output_path_key = "excel_output_path"
+    if not config.get(output_path_key):
+        errors.append(f"{export_format.upper()}输出路径不能为空")
 
     headers = config.get("default_headers", [])
     if not isinstance(headers, list):
@@ -110,6 +186,93 @@ def validate_config(config):
                 continue
             if "key" not in header:
                 errors.append(f"第 {i + 1} 个字段缺少 key 属性")
+
+    validation_rules = config.get("validation_rules", [])
+    if not isinstance(validation_rules, list):
+        errors.append("校验规则格式错误，应为列表")
+    else:
+        valid_types = {"not_null", "format", "range", "regex"}
+        valid_actions = {"mark", "skip", "abort"}
+        for i, rule in enumerate(validation_rules):
+            if not isinstance(rule, dict):
+                errors.append(f"第 {i + 1} 条校验规则格式错误")
+                continue
+            if "field" not in rule or not rule["field"]:
+                errors.append(f"第 {i + 1} 条校验规则缺少 field 属性")
+            if "rule_type" not in rule or rule["rule_type"] not in valid_types:
+                errors.append(f"第 {i + 1} 条校验规则类型无效，应为 {', '.join(valid_types)}")
+            on_fail = rule.get("on_fail", "mark")
+            if on_fail not in valid_actions:
+                errors.append(f"第 {i + 1} 条校验规则处理方式无效，应为 {', '.join(valid_actions)}")
+
+    split_config = config.get("split_config", {})
+    if split_config.get("enabled"):
+        if not split_config.get("split_field"):
+            errors.append("启用拆分时必须指定 split_field（拆分字段）")
+
+        valid_split_rules = {"by_value", "by_range", "by_custom"}
+        split_rule = split_config.get("split_rule", "by_value")
+        if split_rule not in valid_split_rules:
+            errors.append(f"split_rule 无效，应为 {', '.join(sorted(valid_split_rules))}")
+
+        if split_rule == "by_range":
+            range_groups = split_config.get("range_groups", [])
+            if not isinstance(range_groups, list) or len(range_groups) == 0:
+                errors.append("使用 by_range 拆分时必须配置 range_groups")
+            else:
+                for gi, group in enumerate(range_groups):
+                    if not isinstance(group, dict) or "name" not in group:
+                        errors.append(f"第 {gi + 1} 个 range_group 缺少 name 属性")
+
+        if split_rule == "by_custom":
+            custom_rules = split_config.get("custom_rules", [])
+            if not isinstance(custom_rules, list) or len(custom_rules) == 0:
+                errors.append("使用 by_custom 拆分时必须配置 custom_rules")
+            else:
+                for ci, rule in enumerate(custom_rules):
+                    if not isinstance(rule, dict):
+                        errors.append(f"第 {ci + 1} 个 custom_rule 格式错误，应为字典")
+                        continue
+                    if "name" not in rule:
+                        errors.append(f"第 {ci + 1} 个 custom_rule 缺少 name 属性")
+                    if "values" not in rule and "condition" not in rule and "min" not in rule:
+                        errors.append(f"第 {ci + 1} 个 custom_rule 缺少匹配条件（values/condition/min-max）")
+
+    pivot_config = config.get("pivot_config", {})
+    if pivot_config.get("enabled"):
+        valid_aggregates = {
+            "sum", "count", "average", "max", "min",
+            "product", "count_num", "stddev", "stddevp", "var", "varp"
+        }
+
+        row_fields = pivot_config.get("row_fields", [])
+        if not isinstance(row_fields, list):
+            errors.append("透视表 row_fields 格式错误，应为列表")
+        elif len(row_fields) == 0:
+            errors.append("启用透视表时至少需要配置一个行字段 (row_fields)")
+
+        column_fields = pivot_config.get("column_fields", [])
+        if not isinstance(column_fields, list):
+            errors.append("透视表 column_fields 格式错误，应为列表")
+
+        value_fields = pivot_config.get("value_fields", [])
+        if not isinstance(value_fields, list):
+            errors.append("透视表 value_fields 格式错误，应为列表")
+        elif len(value_fields) == 0:
+            errors.append("启用透视表时至少需要配置一个值字段 (value_fields)")
+        else:
+            for vi, vf in enumerate(value_fields):
+                if not isinstance(vf, dict):
+                    errors.append(f"第 {vi + 1} 个 value_field 格式错误，应为字典")
+                    continue
+                if "field" not in vf or not vf["field"]:
+                    errors.append(f"第 {vi + 1} 个 value_field 缺少 field 属性")
+                agg = vf.get("aggregate", "sum")
+                if agg not in valid_aggregates:
+                    errors.append(
+                        f"第 {vi + 1} 个 value_field 的 aggregate 无效，"
+                        f"应为: {', '.join(sorted(valid_aggregates))}"
+                    )
 
     return errors
 
